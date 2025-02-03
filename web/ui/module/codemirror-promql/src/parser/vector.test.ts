@@ -12,10 +12,8 @@
 // limitations under the License.
 
 import { buildVectorMatching } from './vector';
-import { createEditorState } from '../test/utils.test';
-import { walkThrough } from './path-finder';
-import { BinaryExpr, Expr } from '../grammar/parser.terms';
-import chai from 'chai';
+import { createEditorState } from '../test/utils-test';
+import { BinaryExpr } from '@prometheus-io/lezer-promql';
 import { syntaxTree } from '@codemirror/language';
 import { VectorMatchCardinality } from '../types';
 
@@ -202,11 +200,10 @@ describe('buildVectorMatching test', () => {
   testCases.forEach((value) => {
     it(value.binaryExpr, () => {
       const state = createEditorState(value.binaryExpr);
-      const node = walkThrough(syntaxTree(state).topNode, Expr, BinaryExpr);
-      chai.expect(node).to.not.null;
-      chai.expect(node).to.not.undefined;
+      const node = syntaxTree(state).topNode.getChild(BinaryExpr);
+      expect(node).toBeTruthy();
       if (node) {
-        chai.expect(value.expectedVectorMatching).to.deep.equal(buildVectorMatching(state, node));
+        expect(value.expectedVectorMatching).toEqual(buildVectorMatching(state, node));
       }
     });
   });

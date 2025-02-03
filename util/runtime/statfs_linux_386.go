@@ -12,7 +12,6 @@
 // limitations under the License.
 
 //go:build linux && 386
-// +build linux,386
 
 package runtime
 
@@ -23,7 +22,6 @@ import (
 
 // Statfs returns the file system type (Unix only)
 func Statfs(path string) string {
-
 	// Types of file systems that may be returned by `statfs`
 	fsTypes := map[int32]string{
 		0xadf5:     "ADFS_SUPER_MAGIC",

@@ -11,10 +11,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { FetchFn } from '.';
+import { FetchFn } from './index';
 import { Matcher } from '../types';
 import { labelMatchersToString } from '../parser';
-import LRUCache from 'lru-cache';
+import { LRUCache } from 'lru-cache';
 
 export interface MetricMetadata {
   type: string;
@@ -36,6 +36,8 @@ export interface PrometheusClient {
   // Note that the returned list can be a superset of those suggestions for the prefix (i.e., including ones without the
   // prefix), as codemirror will filter these out when displaying suggestions to the user.
   metricNames(prefix?: string): Promise<string[]>;
+  // flags returns flag values that prometheus was configured with.
+  flags(): Promise<Record<string, string>>;
 }
 
 export interface CacheConfig {
@@ -56,6 +58,7 @@ export interface PrometheusConfig {
   cache?: CacheConfig;
   httpMethod?: 'POST' | 'GET';
   apiPrefix?: string;
+  requestHeaders?: Headers;
 }
 
 interface APIResponse<T> {
@@ -63,6 +66,7 @@ interface APIResponse<T> {
   data?: T;
   error?: string;
   warnings?: string[];
+  infos?: string[];
 }
 
 // These are status codes where the Prometheus API still returns a valid JSON body,
@@ -82,6 +86,7 @@ export class HTTPPrometheusClient implements PrometheusClient {
   // For some reason, just assigning via "= fetch" here does not end up executing fetch correctly
   // when calling it, thus the indirection via another function wrapper.
   private readonly fetchFn: FetchFn = (input: RequestInfo, init?: RequestInit): Promise<Response> => fetch(input, init);
+  private requestHeaders: Headers = new Headers();
 
   constructor(config: PrometheusConfig) {
     this.url = config.url ? config.url : '';
@@ -97,6 +102,9 @@ export class HTTPPrometheusClient implements PrometheusClient {
     }
     if (config.apiPrefix) {
       this.apiPrefix = config.apiPrefix;
+    }
+    if (config.requestHeaders) {
+      this.requestHeaders = config.requestHeaders;
     }
   }
 
@@ -209,7 +217,21 @@ export class HTTPPrometheusClient implements PrometheusClient {
     return this.labelValues('__name__');
   }
 
+  flags(): Promise<Record<string, string>> {
+    return this.fetchAPI<Record<string, string>>(this.flagsEndpoint()).catch((error) => {
+      if (this.errorHandler) {
+        this.errorHandler(error);
+      }
+      return {};
+    });
+  }
+
   private fetchAPI<T>(resource: string, init?: RequestInit): Promise<T> {
+    if (init) {
+      init.headers = this.requestHeaders;
+    } else {
+      init = { headers: this.requestHeaders };
+    }
     return this.fetchFn(this.url + resource, init)
       .then((res) => {
         if (!res.ok && ![badRequest, unprocessableEntity, serviceUnavailable].includes(res.status)) {
@@ -254,6 +276,10 @@ export class HTTPPrometheusClient implements PrometheusClient {
   private metricMetadataEndpoint(): string {
     return `${this.apiPrefix}/metadata`;
   }
+
+  private flagsEndpoint(): string {
+    return `${this.apiPrefix}/status/flags`;
+  }
 }
 
 class Cache {
@@ -263,13 +289,18 @@ class Cache {
   private metricMetadata: Record<string, MetricMetadata[]>;
   private labelValues: LRUCache<string, string[]>;
   private labelNames: string[];
+  private flags: Record<string, string>;
 
   constructor(config?: CacheConfig) {
-    const maxAge = config && config.maxAge ? config.maxAge : 5 * 60 * 1000;
+    const maxAge = {
+      ttl: config && config.maxAge ? config.maxAge : 5 * 60 * 1000,
+      ttlAutopurge: false,
+    };
     this.completeAssociation = new LRUCache<string, Map<string, Set<string>>>(maxAge);
     this.metricMetadata = {};
     this.labelValues = new LRUCache<string, string[]>(maxAge);
     this.labelNames = [];
+    this.flags = {};
     if (config?.initialMetricList) {
       this.setLabelValues('__name__', config.initialMetricList);
     }
@@ -295,6 +326,14 @@ class Cache {
         }
       }
     });
+  }
+
+  setFlags(flags: Record<string, string>): void {
+    this.flags = flags;
+  }
+
+  getFlags(): Record<string, string> {
+    return this.flags;
   }
 
   setMetricMetadata(metadata: Record<string, MetricMetadata[]>): void {
@@ -388,7 +427,7 @@ export class CachedPrometheusClient implements PrometheusClient {
 
     return this.client.metricMetadata().then((metadata) => {
       this.cache.setMetricMetadata(metadata);
-      return this.cache.getMetricMetadata();
+      return metadata;
     });
   }
 
@@ -401,5 +440,17 @@ export class CachedPrometheusClient implements PrometheusClient {
 
   metricNames(): Promise<string[]> {
     return this.labelValues('__name__');
+  }
+
+  flags(): Promise<Record<string, string>> {
+    const cachedFlags = this.cache.getFlags();
+    if (cachedFlags && Object.keys(cachedFlags).length > 0) {
+      return Promise.resolve(cachedFlags);
+    }
+
+    return this.client.flags().then((flags) => {
+      this.cache.setFlags(flags);
+      return flags;
+    });
   }
 }

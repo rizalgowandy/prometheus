@@ -178,6 +178,12 @@ export const functionIdentifierTerms = [
     type: 'function',
   },
   {
+    label: 'day_of_year',
+    detail: 'function',
+    info: 'Return the day of the year for provided timestamps',
+    type: 'function',
+  },
+  {
     label: 'deg',
     detail: 'function',
     info: 'Convert radians to degrees for input series',
@@ -210,13 +216,49 @@ export const functionIdentifierTerms = [
     type: 'function',
   },
   {
-    label: 'histogram_quantile',
+    label: 'histogram_avg',
     detail: 'function',
-    info: 'Calculate quantiles from histogram buckets',
+    info: 'Return the average of observations from a native histogram (experimental feature)',
     type: 'function',
   },
   {
-    label: 'holt_winters',
+    label: 'histogram_count',
+    detail: 'function',
+    info: 'Return the count of observations from a native histogram (experimental feature)',
+    type: 'function',
+  },
+  {
+    label: 'histogram_fraction',
+    detail: 'function',
+    info: 'Calculate fractions of observations within an interval from a native histogram (experimental feature)',
+    type: 'function',
+  },
+  {
+    label: 'histogram_quantile',
+    detail: 'function',
+    info: 'Calculate quantiles from native histograms (experimental) and from conventional histogram buckets',
+    type: 'function',
+  },
+  {
+    label: 'histogram_sum',
+    detail: 'function',
+    info: 'Return the sum of observations from a native histogram (experimental feature)',
+    type: 'function',
+  },
+  {
+    label: 'histogram_stddev',
+    detail: 'function',
+    info: 'Estimate the standard deviation of observations from a native histogram (experimental feature)',
+    type: 'function',
+  },
+  {
+    label: 'histogram_stdvar',
+    detail: 'function',
+    info: 'Estimate the standard variance of observations from a native histogram (experimental feature)',
+    type: 'function',
+  },
+  {
+    label: 'double_exponential_smoothing',
     detail: 'function',
     info: 'Calculate smoothed value of input series',
     type: 'function',
@@ -237,6 +279,12 @@ export const functionIdentifierTerms = [
     label: 'increase',
     detail: 'function',
     info: 'Calculate the increase in value over a range of time (for counters)',
+    type: 'function',
+  },
+  {
+    label: 'info',
+    detail: 'function',
+    info: 'Add data labels from corresponding info metrics',
     type: 'function',
   },
   {
@@ -279,6 +327,12 @@ export const functionIdentifierTerms = [
     label: 'log2',
     detail: 'function',
     info: 'Calculate base-2 logarithm of input series',
+    type: 'function',
+  },
+  {
+    label: 'mad_over_time',
+    detail: 'function',
+    info: 'Return the median absolute deviation over time for input series',
     type: 'function',
   },
   {
@@ -392,6 +446,18 @@ export const functionIdentifierTerms = [
     type: 'function',
   },
   {
+    label: 'sort_by_label',
+    detail: 'function',
+    info: 'Sort input series ascendingly by label value',
+    type: 'function',
+  },
+  {
+    label: 'sort_by_label_desc',
+    detail: 'function',
+    info: 'Sort input series descendingly by value value',
+    type: 'function',
+  },
+  {
     label: 'sqrt',
     detail: 'function',
     info: 'Return the square root for input series',
@@ -406,7 +472,7 @@ export const functionIdentifierTerms = [
   {
     label: 'stdvar_over_time',
     detail: 'function',
-    info: 'Calculate the standard variation within input series over time',
+    info: 'Calculate the standard variance within input series over time',
     type: 'function',
   },
   {
@@ -482,6 +548,18 @@ export const aggregateOpTerms = [
     label: 'group',
     detail: 'aggregation',
     info: 'Group series, while setting the sample value to 1',
+    type: 'keyword',
+  },
+  {
+    label: 'limitk',
+    detail: 'aggregation',
+    info: 'Sample k elements',
+    type: 'keyword',
+  },
+  {
+    label: 'limit_ratio',
+    detail: 'aggregation',
+    info: 'Sample given ratio of elements',
     type: 'keyword',
   },
   {

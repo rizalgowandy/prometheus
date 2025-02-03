@@ -11,9 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import chai from 'chai';
 import { analyzeCompletion, computeStartCompletePosition, ContextKind } from './hybrid';
-import { createEditorState, mockedMetricsTerms, mockPrometheusServer } from '../test/utils.test';
+import { createEditorState, mockedMetricsTerms, mockPrometheusServer } from '../test/utils-test';
 import { Completion, CompletionContext } from '@codemirror/autocomplete';
 import {
   aggregateOpModifierTerms,
@@ -27,7 +26,7 @@ import {
   numberTerms,
   snippets,
 } from './promql.terms';
-import { EqlSingle, Neq } from '../grammar/parser.terms';
+import { EqlSingle, Neq } from '@prometheus-io/lezer-promql';
 import { syntaxTree } from '@codemirror/language';
 import { newCompleteStrategy } from './index';
 
@@ -232,7 +231,19 @@ describe('analyzeCompletion test', () => {
       title: 'starting to autocomplete labelName in aggregate modifier',
       expr: 'sum by ()',
       pos: 8, // cursor is between the bracket
-      expectedContext: [{ kind: ContextKind.LabelName }],
+      expectedContext: [{ kind: ContextKind.LabelName, metricName: '' }],
+    },
+    {
+      title: 'starting to autocomplete labelName in aggregate modifier with metric name',
+      expr: 'sum(up) by ()',
+      pos: 12, // cursor is between ()
+      expectedContext: [{ kind: ContextKind.LabelName, metricName: 'up' }],
+    },
+    {
+      title: 'starting to autocomplete labelName in aggregate modifier with metric name in front',
+      expr: 'sum by ()(up)',
+      pos: 8, // cursor is between ()
+      expectedContext: [{ kind: ContextKind.LabelName, metricName: 'up' }],
     },
     {
       title: 'continue to autocomplete labelName in aggregate modifier',
@@ -241,15 +252,27 @@ describe('analyzeCompletion test', () => {
       expectedContext: [{ kind: ContextKind.LabelName }],
     },
     {
+      title: 'continue to autocomplete QuotedLabelName in aggregate modifier',
+      expr: 'sum by ("myL")',
+      pos: 12, // cursor is between the bracket after the string myL
+      expectedContext: [{ kind: ContextKind.LabelName }],
+    },
+    {
       title: 'autocomplete labelName in a list',
       expr: 'sum by (myLabel1,)',
       pos: 17, // cursor is between the bracket after the string myLab
-      expectedContext: [{ kind: ContextKind.LabelName }],
+      expectedContext: [{ kind: ContextKind.LabelName, metricName: '' }],
     },
     {
       title: 'autocomplete labelName in a list 2',
       expr: 'sum by (myLabel1, myLab)',
       pos: 23, // cursor is between the bracket after the string myLab
+      expectedContext: [{ kind: ContextKind.LabelName }],
+    },
+    {
+      title: 'autocomplete labelName in a list 2',
+      expr: 'sum by ("myLabel1", "myLab")',
+      pos: 27, // cursor is between the bracket after the string myLab
       expectedContext: [{ kind: ContextKind.LabelName }],
     },
     {
@@ -289,6 +312,12 @@ describe('analyzeCompletion test', () => {
       expectedContext: [{ kind: ContextKind.LabelName, metricName: '' }],
     },
     {
+      title: 'continue to autocomplete quoted labelName associated to a metric',
+      expr: '{"metric_"}',
+      pos: 10, // cursor is between the bracket after the string metric_
+      expectedContext: [{ kind: ContextKind.MetricName, metricName: 'metric_' }],
+    },
+    {
       title: 'autocomplete the labelValue with metricName + labelName',
       expr: 'metric_name{labelName=""}',
       pos: 23, // cursor is between the quotes
@@ -326,6 +355,30 @@ describe('analyzeCompletion test', () => {
               name: 'labelName',
               type: Neq,
               value: '',
+            },
+          ],
+        },
+      ],
+    },
+    {
+      title: 'autocomplete the labelValue with metricName + quoted labelName',
+      expr: 'metric_name{labelName="labelValue", "labelName"!=""}',
+      pos: 50, // cursor is between the quotes
+      expectedContext: [
+        {
+          kind: ContextKind.LabelValue,
+          metricName: 'metric_name',
+          labelName: 'labelName',
+          matchers: [
+            {
+              name: 'labelName',
+              type: Neq,
+              value: '',
+            },
+            {
+              name: 'labelName',
+              type: EqlSingle,
+              value: 'labelValue',
             },
           ],
         },
@@ -415,6 +468,12 @@ describe('analyzeCompletion test', () => {
       expr: 'metric_name{labelName!}',
       pos: 22, // cursor is after '!'
       expectedContext: [{ kind: ContextKind.MatchOp }],
+    },
+    {
+      title: 'autocomplete matchOp 3',
+      expr: 'metric_name{"labelName"!}',
+      pos: 24, // cursor is after '!'
+      expectedContext: [{ kind: ContextKind.BinOp }],
     },
     {
       title: 'autocomplete duration with offset',
@@ -524,13 +583,43 @@ describe('analyzeCompletion test', () => {
       pos: 5,
       expectedContext: [{ kind: ContextKind.AtModifiers }],
     },
+    {
+      title: 'autocomplete topk params',
+      expr: 'topk()',
+      pos: 5,
+      expectedContext: [{ kind: ContextKind.Number }],
+    },
+    {
+      title: 'autocomplete topk params 2',
+      expr: 'topk(inf,)',
+      pos: 9,
+      expectedContext: [{ kind: ContextKind.MetricName, metricName: '' }, { kind: ContextKind.Function }, { kind: ContextKind.Aggregation }],
+    },
+    {
+      title: 'autocomplete topk params 3',
+      expr: 'topk(inf,r)',
+      pos: 10,
+      expectedContext: [{ kind: ContextKind.MetricName, metricName: 'r' }, { kind: ContextKind.Function }, { kind: ContextKind.Aggregation }],
+    },
+    {
+      title: 'autocomplete topk params 4',
+      expr: 'topk by(instance) ()',
+      pos: 19,
+      expectedContext: [{ kind: ContextKind.Number }],
+    },
+    {
+      title: 'autocomplete topk params 5',
+      expr: 'topk by(instance) (inf,r)',
+      pos: 24,
+      expectedContext: [{ kind: ContextKind.MetricName, metricName: 'r' }, { kind: ContextKind.Function }, { kind: ContextKind.Aggregation }],
+    },
   ];
   testCases.forEach((value) => {
     it(value.title, () => {
       const state = createEditorState(value.expr);
       const node = syntaxTree(state).resolve(value.pos, -1);
-      const result = analyzeCompletion(state, node);
-      chai.expect(value.expectedContext).to.deep.equal(result);
+      const result = analyzeCompletion(state, node, value.pos);
+      expect(value.expectedContext).toEqual(result);
     });
   });
 });
@@ -716,8 +805,8 @@ describe('computeStartCompletePosition test', () => {
     it(value.title, () => {
       const state = createEditorState(value.expr);
       const node = syntaxTree(state).resolve(value.pos, -1);
-      const result = computeStartCompletePosition(node, value.pos);
-      chai.expect(value.expectedStart).to.equal(result);
+      const result = computeStartCompletePosition(state, node, value.pos);
+      expect(value.expectedStart).toEqual(result);
     });
   });
 });
@@ -735,7 +824,7 @@ describe('autocomplete promQL test', () => {
         options: ([] as Completion[]).concat(functionIdentifierTerms, aggregateOpTerms, numberTerms, snippets),
         from: 0,
         to: 0,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -746,7 +835,7 @@ describe('autocomplete promQL test', () => {
         options: ([] as Completion[]).concat(functionIdentifierTerms, aggregateOpTerms, numberTerms, snippets),
         from: 0,
         to: 3,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -757,7 +846,7 @@ describe('autocomplete promQL test', () => {
         options: ([] as Completion[]).concat(functionIdentifierTerms, aggregateOpTerms, snippets),
         from: 4,
         to: 4,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -768,7 +857,7 @@ describe('autocomplete promQL test', () => {
         options: ([] as Completion[]).concat(functionIdentifierTerms, aggregateOpTerms, snippets),
         from: 4,
         to: 6,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -779,7 +868,7 @@ describe('autocomplete promQL test', () => {
         options: ([] as Completion[]).concat(functionIdentifierTerms, aggregateOpTerms, snippets),
         from: 9,
         to: 9,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -790,7 +879,7 @@ describe('autocomplete promQL test', () => {
         options: ([] as Completion[]).concat(functionIdentifierTerms, aggregateOpTerms, snippets),
         from: 25,
         to: 33,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -801,7 +890,7 @@ describe('autocomplete promQL test', () => {
         options: ([] as Completion[]).concat(functionIdentifierTerms, aggregateOpTerms, binOpModifierTerms, numberTerms, snippets),
         from: 14,
         to: 19,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -812,7 +901,7 @@ describe('autocomplete promQL test', () => {
         options: ([] as Completion[]).concat(functionIdentifierTerms, aggregateOpTerms, binOpModifierTerms, numberTerms, snippets),
         from: 40,
         to: 41,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -823,7 +912,7 @@ describe('autocomplete promQL test', () => {
         options: [],
         from: 8,
         to: 8,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -834,7 +923,7 @@ describe('autocomplete promQL test', () => {
         options: [],
         from: 8,
         to: 11,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -845,7 +934,7 @@ describe('autocomplete promQL test', () => {
         options: [],
         from: 18,
         to: 23,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -856,7 +945,7 @@ describe('autocomplete promQL test', () => {
         options: [],
         from: 12,
         to: 12,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -867,7 +956,7 @@ describe('autocomplete promQL test', () => {
         options: [],
         from: 1,
         to: 1,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -878,7 +967,7 @@ describe('autocomplete promQL test', () => {
         options: [],
         from: 12,
         to: 15,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -889,7 +978,7 @@ describe('autocomplete promQL test', () => {
         options: [],
         from: 1,
         to: 4,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -900,7 +989,7 @@ describe('autocomplete promQL test', () => {
         options: [],
         from: 23,
         to: 23,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -911,7 +1000,7 @@ describe('autocomplete promQL test', () => {
         options: [],
         from: 12,
         to: 12,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -922,7 +1011,7 @@ describe('autocomplete promQL test', () => {
         options: ([] as Completion[]).concat(aggregateOpModifierTerms, binOpTerms),
         from: 6,
         to: 7,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -933,7 +1022,7 @@ describe('autocomplete promQL test', () => {
         options: ([] as Completion[]).concat(aggregateOpModifierTerms, binOpTerms),
         from: 19,
         to: 21,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -944,7 +1033,7 @@ describe('autocomplete promQL test', () => {
         options: ([] as Completion[]).concat(aggregateOpModifierTerms, binOpTerms, [{ label: 'offset' }]),
         from: 4,
         to: 5,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -955,7 +1044,7 @@ describe('autocomplete promQL test', () => {
         options: binOpTerms,
         from: 12,
         to: 13,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -966,7 +1055,7 @@ describe('autocomplete promQL test', () => {
         options: binOpTerms,
         from: 12,
         to: 13,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -977,7 +1066,7 @@ describe('autocomplete promQL test', () => {
         options: matchOpTerms,
         from: 11,
         to: 12,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -988,7 +1077,7 @@ describe('autocomplete promQL test', () => {
         options: matchOpTerms,
         from: 21,
         to: 22,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -999,7 +1088,7 @@ describe('autocomplete promQL test', () => {
         options: durationTerms,
         from: 28,
         to: 28,
-        span: undefined,
+        validFor: undefined,
       },
     },
     {
@@ -1010,7 +1099,7 @@ describe('autocomplete promQL test', () => {
         options: durationTerms,
         from: 46,
         to: 46,
-        span: undefined,
+        validFor: undefined,
       },
     },
     {
@@ -1021,7 +1110,7 @@ describe('autocomplete promQL test', () => {
         options: ([] as Completion[]).concat(binOpTerms, [{ label: 'offset' }]),
         from: 20,
         to: 23,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -1032,7 +1121,7 @@ describe('autocomplete promQL test', () => {
         options: ([] as Completion[]).concat(binOpTerms, [{ label: 'offset' }]),
         from: 12,
         to: 16,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -1043,7 +1132,7 @@ describe('autocomplete promQL test', () => {
         options: ([] as Completion[]).concat(binOpTerms, [{ label: 'offset' }]),
         from: 34,
         to: 37,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -1054,7 +1143,7 @@ describe('autocomplete promQL test', () => {
         options: ([] as Completion[]).concat(binOpTerms, [{ label: 'offset' }]),
         from: 14,
         to: 16,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -1065,7 +1154,7 @@ describe('autocomplete promQL test', () => {
         options: ([] as Completion[]).concat(binOpTerms, [{ label: 'offset' }]),
         from: 38,
         to: 41,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -1076,7 +1165,7 @@ describe('autocomplete promQL test', () => {
         options: [],
         from: 0,
         to: 3,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -1087,7 +1176,7 @@ describe('autocomplete promQL test', () => {
         options: [],
         from: 0,
         to: 12,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -1098,7 +1187,7 @@ describe('autocomplete promQL test', () => {
         options: durationTerms,
         from: 4,
         to: 4,
-        span: undefined,
+        validFor: undefined,
       },
     },
     {
@@ -1109,7 +1198,7 @@ describe('autocomplete promQL test', () => {
         options: durationTerms,
         from: 6,
         to: 6,
-        span: undefined,
+        validFor: undefined,
       },
     },
     {
@@ -1120,7 +1209,7 @@ describe('autocomplete promQL test', () => {
         options: durationTerms,
         from: 26,
         to: 26,
-        span: undefined,
+        validFor: undefined,
       },
     },
     {
@@ -1131,7 +1220,7 @@ describe('autocomplete promQL test', () => {
         options: durationTerms,
         from: 28,
         to: 28,
-        span: undefined,
+        validFor: undefined,
       },
     },
     {
@@ -1142,7 +1231,7 @@ describe('autocomplete promQL test', () => {
         options: durationTerms,
         from: 7,
         to: 7,
-        span: undefined,
+        validFor: undefined,
       },
     },
     {
@@ -1153,7 +1242,7 @@ describe('autocomplete promQL test', () => {
         options: durationTerms,
         from: 9,
         to: 9,
-        span: undefined,
+        validFor: undefined,
       },
     },
     {
@@ -1164,7 +1253,7 @@ describe('autocomplete promQL test', () => {
         options: durationTerms,
         from: 29,
         to: 29,
-        span: undefined,
+        validFor: undefined,
       },
     },
     {
@@ -1175,7 +1264,7 @@ describe('autocomplete promQL test', () => {
         options: durationTerms,
         from: 31,
         to: 31,
-        span: undefined,
+        validFor: undefined,
       },
     },
     {
@@ -1186,7 +1275,7 @@ describe('autocomplete promQL test', () => {
         options: atModifierTerms,
         from: 4,
         to: 5,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -1198,7 +1287,7 @@ describe('autocomplete promQL test', () => {
         options: ([] as Completion[]).concat(mockedMetricsTerms, functionIdentifierTerms, aggregateOpTerms, numberTerms, snippets),
         from: 0,
         to: 5,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -1227,7 +1316,7 @@ describe('autocomplete promQL test', () => {
         ],
         from: 20,
         to: 20,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -1244,7 +1333,7 @@ describe('autocomplete promQL test', () => {
         ],
         from: 25,
         to: 25,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
     {
@@ -1275,7 +1364,7 @@ describe('autocomplete promQL test', () => {
         ),
         from: 0,
         to: 3,
-        span: /^[a-zA-Z0-9_:]+$/,
+        validFor: /^[a-zA-Z0-9_:]+$/,
       },
     },
   ];
@@ -1285,7 +1374,7 @@ describe('autocomplete promQL test', () => {
       const context = new CompletionContext(state, value.pos, true);
       const completion = newCompleteStrategy(value.conf);
       const result = await completion.promQL(context);
-      chai.expect(value.expectedResult).to.deep.equal(result);
+      expect(value.expectedResult).toEqual(result);
     });
   });
 });

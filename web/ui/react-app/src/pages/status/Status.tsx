@@ -1,4 +1,4 @@
-import React, { Fragment, FC } from 'react';
+import React, { Fragment, FC, useState, useEffect } from 'react';
 import { Table } from 'reactstrap';
 import { withStatusIndicator } from '../../components/withStatusIndicator';
 import { useFetch } from '../../hooks/useFetch';
@@ -83,28 +83,74 @@ const StatusWithStatusIndicator = withStatusIndicator(StatusContent);
 
 StatusContent.displayName = 'Status';
 
-const Status: FC = () => {
+const StatusResult: FC<{ fetchPath: string; title: string }> = ({ fetchPath, title }) => {
+  const { response, isLoading, error } = useFetch(fetchPath);
+  return (
+    <StatusWithStatusIndicator
+      key={title}
+      data={response.data}
+      title={title}
+      isLoading={isLoading}
+      error={error}
+      componentTitle={title}
+    />
+  );
+};
+
+interface StatusProps {
+  agentMode?: boolean | false;
+  setAnimateLogo?: (animateLogo: boolean) => void;
+}
+
+const Status: FC<StatusProps> = ({ agentMode, setAnimateLogo }) => {
+  /*    _
+   *   /' \
+   *  |    |
+   *   \__/ */
+
+  const [inputText, setInputText] = useState('');
+
+  useEffect(() => {
+    const handleKeyPress = (event: KeyboardEvent) => {
+      const keyPressed = event.key.toUpperCase();
+      setInputText((prevInputText) => {
+        const newInputText = prevInputText.slice(-3) + String.fromCharCode(((keyPressed.charCodeAt(0) - 64) % 26) + 65);
+        return newInputText;
+      });
+    };
+
+    document.addEventListener('keypress', handleKeyPress);
+
+    return () => {
+      document.removeEventListener('keypress', handleKeyPress);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (setAnimateLogo && inputText != '') {
+      setAnimateLogo(inputText.toUpperCase() === 'QSPN');
+    }
+  }, [inputText]);
+
+  /*    _
+   *   /' \
+   *  |    |
+   *   \__/ */
+
   const pathPrefix = usePathPrefix();
   const path = `${pathPrefix}/${API_PATH}`;
 
   return (
     <>
       {[
-        { fetchResult: useFetch<Record<string, string>>(`${path}/status/runtimeinfo`), title: 'Runtime Information' },
-        { fetchResult: useFetch<Record<string, string>>(`${path}/status/buildinfo`), title: 'Build Information' },
-        { fetchResult: useFetch<Record<string, string>>(`${path}/alertmanagers`), title: 'Alertmanagers' },
-      ].map(({ fetchResult, title }) => {
-        const { response, isLoading, error } = fetchResult;
-        return (
-          <StatusWithStatusIndicator
-            key={title}
-            data={response.data}
-            title={title}
-            isLoading={isLoading}
-            error={error}
-            componentTitle={title}
-          />
-        );
+        { fetchPath: `${path}/status/runtimeinfo`, title: 'Runtime Information' },
+        { fetchPath: `${path}/status/buildinfo`, title: 'Build Information' },
+        { fetchPath: `${path}/alertmanagers`, title: 'Alertmanagers' },
+      ].map(({ fetchPath, title }) => {
+        if (agentMode && title === 'Alertmanagers') {
+          return null;
+        }
+        return <StatusResult fetchPath={fetchPath} title={title} />;
       })}
     </>
   );

@@ -17,26 +17,19 @@ import (
 	"context"
 	"math"
 	"net/url"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/prometheus/prometheus/model/histogram"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 )
 
 func TestTemplateExpansion(t *testing.T) {
-	scenarios := []struct {
-		text        string
-		output      string
-		input       interface{}
-		options     []string
-		queryResult promql.Vector
-		shouldFail  bool
-		html        bool
-		errorMsg    string
-	}{
+	testTemplateExpansion(t, []scenario{
 		{
 			// No template.
 			text:   "plain text",
@@ -46,6 +39,12 @@ func TestTemplateExpansion(t *testing.T) {
 			// Simple value.
 			text:   "{{ 1 }}",
 			output: "1",
+		},
+		{
+			// Native histogram value.
+			text:   "{{ . | value }}",
+			input:  &sample{Value: &histogram.FloatHistogram{Count: 3, Sum: 10}},
+			output: (&histogram.FloatHistogram{Count: 3, Sum: 10}).String(),
 		},
 		{
 			// Non-ASCII space (not allowed in text/template, see https://github.com/golang/go/blob/master/src/text/template/parse/lex.go#L98)
@@ -78,7 +77,7 @@ func TestTemplateExpansion(t *testing.T) {
 		{
 			text:        "{{ query \"1.5\" | first | value }}",
 			output:      "1.5",
-			queryResult: promql.Vector{{Point: promql.Point{T: 0, V: 1.5}}},
+			queryResult: promql.Vector{{T: 0, F: 1.5}},
 		},
 		{
 			// Get value from query.
@@ -86,10 +85,23 @@ func TestTemplateExpansion(t *testing.T) {
 			queryResult: promql.Vector{
 				{
 					Metric: labels.FromStrings(labels.MetricName, "metric", "instance", "a"),
-					Point:  promql.Point{T: 0, V: 11},
+					T:      0,
+					F:      11,
 				},
 			},
 			output: "11",
+		},
+		{
+			// Get value of a native histogram from query.
+			text: "{{ query \"metric{instance='a'}\" | first | value }}",
+			queryResult: promql.Vector{
+				{
+					Metric: labels.FromStrings(labels.MetricName, "metric", "instance", "a"),
+					T:      0,
+					H:      &histogram.FloatHistogram{Count: 3, Sum: 10},
+				},
+			},
+			output: (&histogram.FloatHistogram{Count: 3, Sum: 10}).String(),
 		},
 		{
 			// Get label from query.
@@ -98,7 +110,8 @@ func TestTemplateExpansion(t *testing.T) {
 			queryResult: promql.Vector{
 				{
 					Metric: labels.FromStrings(labels.MetricName, "metric", "instance", "a"),
-					Point:  promql.Point{T: 0, V: 11},
+					T:      0,
+					F:      11,
 				},
 			},
 			output: "a",
@@ -109,7 +122,8 @@ func TestTemplateExpansion(t *testing.T) {
 			queryResult: promql.Vector{
 				{
 					Metric: labels.FromStrings(labels.MetricName, "metric", "__value__", "a"),
-					Point:  promql.Point{T: 0, V: 11},
+					T:      0,
+					F:      11,
 				},
 			},
 			output: "a",
@@ -120,7 +134,8 @@ func TestTemplateExpansion(t *testing.T) {
 			queryResult: promql.Vector{
 				{
 					Metric: labels.FromStrings(labels.MetricName, "metric", "instance", "a"),
-					Point:  promql.Point{T: 0, V: 11},
+					T:      0,
+					F:      11,
 				},
 			},
 			output: "",
@@ -131,7 +146,8 @@ func TestTemplateExpansion(t *testing.T) {
 			queryResult: promql.Vector{
 				{
 					Metric: labels.FromStrings(labels.MetricName, "metric", "instance", "a"),
-					Point:  promql.Point{T: 0, V: 11},
+					T:      0,
+					F:      11,
 				},
 			},
 			output: "",
@@ -141,7 +157,8 @@ func TestTemplateExpansion(t *testing.T) {
 			queryResult: promql.Vector{
 				{
 					Metric: labels.FromStrings(labels.MetricName, "metric", "instance", "a"),
-					Point:  promql.Point{T: 0, V: 11},
+					T:      0,
+					F:      11,
 				},
 			},
 			output: "",
@@ -153,13 +170,50 @@ func TestTemplateExpansion(t *testing.T) {
 			queryResult: promql.Vector{
 				{
 					Metric: labels.FromStrings(labels.MetricName, "metric", "instance", "b"),
-					Point:  promql.Point{T: 0, V: 21},
+					T:      0,
+					F:      21,
 				}, {
 					Metric: labels.FromStrings(labels.MetricName, "metric", "instance", "a"),
-					Point:  promql.Point{T: 0, V: 11},
+					T:      0,
+					F:      11,
 				},
 			},
 			output: "a:11: b:21: ",
+		},
+		{
+			// Simple hostname.
+			text:   "{{ \"foo.example.com\" | stripPort }}",
+			output: "foo.example.com",
+		},
+		{
+			// Hostname with port.
+			text:   "{{ \"foo.example.com:12345\" | stripPort }}",
+			output: "foo.example.com",
+		},
+		{
+			// Simple IPv4 address.
+			text:   "{{ \"192.0.2.1\" | stripPort }}",
+			output: "192.0.2.1",
+		},
+		{
+			// IPv4 address with port.
+			text:   "{{ \"192.0.2.1:12345\" | stripPort }}",
+			output: "192.0.2.1",
+		},
+		{
+			// Simple IPv6 address.
+			text:   "{{ \"2001:0DB8::1\" | stripPort }}",
+			output: "2001:0DB8::1",
+		},
+		{
+			// IPv6 address with port.
+			text:   "{{ \"[2001:0DB8::1]:12345\" | stripPort }}",
+			output: "2001:0DB8::1",
+		},
+		{
+			// Value can't be split into host and port.
+			text:   "{{ \"[2001:0DB8::1]::12345\" | stripPort }}",
+			output: "[2001:0DB8::1]::12345",
 		},
 		{
 			// Missing value is no value for nil options.
@@ -246,13 +300,13 @@ func TestTemplateExpansion(t *testing.T) {
 		{
 			// Humanize - int.
 			text:   "{{ range . }}{{ humanize . }}:{{ end }}",
-			input:  []int{0, -1, 1, 1234567, math.MaxInt64},
+			input:  []int64{0, -1, 1, 1234567, math.MaxInt64},
 			output: "0:-1:1:1.235M:9.223E:",
 		},
 		{
 			// Humanize - uint.
 			text:   "{{ range . }}{{ humanize . }}:{{ end }}",
-			input:  []uint{0, 1, 1234567, math.MaxUint64},
+			input:  []uint64{0, 1, 1234567, math.MaxUint64},
 			output: "0:1:1.235M:18.45E:",
 		},
 		{
@@ -276,13 +330,13 @@ func TestTemplateExpansion(t *testing.T) {
 		{
 			// Humanize1024 - int.
 			text:   "{{ range . }}{{ humanize1024 . }}:{{ end }}",
-			input:  []int{0, -1, 1, 1234567, math.MaxInt64},
+			input:  []int64{0, -1, 1, 1234567, math.MaxInt64},
 			output: "0:-1:1:1.177Mi:8Ei:",
 		},
 		{
 			// Humanize1024 - uint.
 			text:   "{{ range . }}{{ humanize1024 . }}:{{ end }}",
-			input:  []uint{0, 1, 1234567, math.MaxUint64},
+			input:  []uint64{0, 1, 1234567, math.MaxUint64},
 			output: "0:1:1.177Mi:16Ei:",
 		},
 		{
@@ -318,14 +372,14 @@ func TestTemplateExpansion(t *testing.T) {
 		{
 			// HumanizeDuration - int.
 			text:   "{{ range . }}{{ humanizeDuration . }}:{{ end }}",
-			input:  []int{0, -1, 1, 1234567, math.MaxInt64},
-			output: "0s:-1s:1s:14d 6h 56m 7s:-106751991167300d -15h -30m -8s:",
+			input:  []int{0, -1, 1, 1234567},
+			output: "0s:-1s:1s:14d 6h 56m 7s:",
 		},
 		{
 			// HumanizeDuration - uint.
 			text:   "{{ range . }}{{ humanizeDuration . }}:{{ end }}",
-			input:  []uint{0, 1, 1234567, math.MaxUint64},
-			output: "0s:1s:14d 6h 56m 7s:-106751991167300d -15h -30m -8s:",
+			input:  []uint{0, 1, 1234567},
+			output: "0s:1s:14d 6h 56m 7s:",
 		},
 		{
 			// Humanize* Inf and NaN - float64.
@@ -347,13 +401,13 @@ func TestTemplateExpansion(t *testing.T) {
 		{
 			// HumanizePercentage - int.
 			text:   "{{ range . }}{{ humanizePercentage . }}:{{ end }}",
-			input:  []int{0, -1, 1, 1234567, math.MaxInt64},
+			input:  []int64{0, -1, 1, 1234567, math.MaxInt64},
 			output: "0%:-100%:100%:1.235e+08%:9.223e+20%:",
 		},
 		{
 			// HumanizePercentage - uint.
 			text:   "{{ range . }}{{ humanizePercentage . }}:{{ end }}",
-			input:  []uint{0, 1, 1234567, math.MaxUint64},
+			input:  []uint64{0, 1, 1234567, math.MaxUint64},
 			output: "0%:100%:1.235e+08%:1.845e+21%:",
 		},
 		{
@@ -370,26 +424,26 @@ func TestTemplateExpansion(t *testing.T) {
 		{
 			// HumanizeTimestamp - int.
 			text:   "{{ range . }}{{ humanizeTimestamp . }}:{{ end }}",
-			input:  []int{0, -1, 1, 1234567, 9223372036},
+			input:  []int64{0, -1, 1, 1234567, 9223372036},
 			output: "1970-01-01 00:00:00 +0000 UTC:1969-12-31 23:59:59 +0000 UTC:1970-01-01 00:00:01 +0000 UTC:1970-01-15 06:56:07 +0000 UTC:2262-04-11 23:47:16 +0000 UTC:",
 		},
 		{
 			// HumanizeTimestamp - uint.
 			text:   "{{ range . }}{{ humanizeTimestamp . }}:{{ end }}",
-			input:  []uint{0, 1, 1234567, 9223372036},
+			input:  []uint64{0, 1, 1234567, 9223372036},
 			output: "1970-01-01 00:00:00 +0000 UTC:1970-01-01 00:00:01 +0000 UTC:1970-01-15 06:56:07 +0000 UTC:2262-04-11 23:47:16 +0000 UTC:",
 		},
 		{
 			// HumanizeTimestamp - int with error.
 			text:       "{{ range . }}{{ humanizeTimestamp . }}:{{ end }}",
-			input:      []int{math.MinInt64, math.MaxInt64},
+			input:      []int64{math.MinInt64, math.MaxInt64},
 			shouldFail: true,
 			errorMsg:   `error executing template test: template: test:1:16: executing "test" at <humanizeTimestamp .>: error calling humanizeTimestamp: -9.223372036854776e+18 cannot be represented as a nanoseconds timestamp since it overflows int64`,
 		},
 		{
 			// HumanizeTimestamp - uint with error.
 			text:       "{{ range . }}{{ humanizeTimestamp . }}:{{ end }}",
-			input:      []uint{math.MaxUint64},
+			input:      []uint64{math.MaxUint64},
 			shouldFail: true,
 			errorMsg:   `error executing template test: template: test:1:16: executing "test" at <humanizeTimestamp .>: error calling humanizeTimestamp: 1.8446744073709552e+19 cannot be represented as a nanoseconds timestamp since it overflows int64`,
 		},
@@ -402,6 +456,16 @@ func TestTemplateExpansion(t *testing.T) {
 			// HumanizeTimestamp - model.SampleValue input - string.
 			text:   `{{ "1435065584.128" | humanizeTimestamp }}`,
 			output: "2015-06-23 13:19:44.128 +0000 UTC",
+		},
+		{
+			// ToTime - model.SampleValue input - float64.
+			text:   `{{ (1435065584.128 | toTime).Format "2006" }}`,
+			output: "2015",
+		},
+		{
+			// ToTime - model.SampleValue input - string.
+			text:   `{{ ("1435065584.128" | toTime).Format "2006" }}`,
+			output: "2015",
 		},
 		{
 			// Title.
@@ -454,8 +518,56 @@ func TestTemplateExpansion(t *testing.T) {
 			text:   "{{ printf \"%0.2f\" (parseDuration \"1h2m10ms\") }}",
 			output: "3720.01",
 		},
-	}
+		{
+			// Simple hostname.
+			text:   "{{ \"foo.example.com\" | stripDomain }}",
+			output: "foo",
+		},
+		{
+			// Hostname with port.
+			text:   "{{ \"foo.example.com:12345\" | stripDomain }}",
+			output: "foo:12345",
+		},
+		{
+			// Simple IPv4 address.
+			text:   "{{ \"192.0.2.1\" | stripDomain }}",
+			output: "192.0.2.1",
+		},
+		{
+			// IPv4 address with port.
+			text:   "{{ \"192.0.2.1:12345\" | stripDomain }}",
+			output: "192.0.2.1:12345",
+		},
+		{
+			// Simple IPv6 address.
+			text:   "{{ \"2001:0DB8::1\" | stripDomain }}",
+			output: "2001:0DB8::1",
+		},
+		{
+			// IPv6 address with port.
+			text:   "{{ \"[2001:0DB8::1]:12345\" | stripDomain }}",
+			output: "[2001:0DB8::1]:12345",
+		},
+		{
+			// Value can't be split into host and port.
+			text:   "{{ \"[2001:0DB8::1]::12345\" | stripDomain }}",
+			output: "[2001:0DB8::1]::12345",
+		},
+	})
+}
 
+type scenario struct {
+	text        string
+	output      string
+	input       interface{}
+	options     []string
+	queryResult promql.Vector
+	shouldFail  bool
+	html        bool
+	errorMsg    string
+}
+
+func testTemplateExpansion(t *testing.T, scenarios []scenario) {
 	extURL, err := url.Parse("http://testhost:9090/path/prefix")
 	if err != nil {
 		panic(err)
@@ -484,5 +596,57 @@ func TestTemplateExpansion(t *testing.T) {
 		if err == nil {
 			require.Equal(t, s.output, result)
 		}
+	}
+}
+
+func Test_floatToTime(t *testing.T) {
+	type args struct {
+		v float64
+	}
+	tests := []struct {
+		name    string
+		args    args
+		want    *time.Time
+		wantErr bool
+	}{
+		{
+			"happy path",
+			args{
+				v: 1657155181,
+			},
+			func() *time.Time {
+				tm := time.Date(2022, 7, 7, 0, 53, 1, 0, time.UTC)
+				return &tm
+			}(),
+			false,
+		},
+		{
+			"more than math.MaxInt64",
+			args{
+				v: 1.79769313486231570814527423731704356798070e+300,
+			},
+			nil,
+			true,
+		},
+		{
+			"less than math.MinInt64",
+			args{
+				v: -1.79769313486231570814527423731704356798070e+300,
+			},
+			nil,
+			true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := floatToTime(tt.args.v)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("floatToTime() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("floatToTime() got = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

@@ -2,23 +2,24 @@ import React, { Component } from 'react';
 import { Button, ButtonGroup, Form, Input, InputGroup, InputGroupAddon } from 'reactstrap';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faChartArea, faChartLine, faMinus, faPlus } from '@fortawesome/free-solid-svg-icons';
+import { faChartArea, faChartLine, faMinus, faPlus, faBarChart } from '@fortawesome/free-solid-svg-icons';
 import TimeInput from './TimeInput';
 import { formatDuration, parseDuration } from '../../utils';
+import { GraphDisplayMode } from './Panel';
 
 interface GraphControlsProps {
   range: number;
   endTime: number | null;
   useLocalTime: boolean;
   resolution: number | null;
-  stacked: boolean;
+  displayMode: GraphDisplayMode;
+  isHeatmapData: boolean;
   showExemplars: boolean;
-
   onChangeRange: (range: number) => void;
   onChangeEndTime: (endTime: number | null) => void;
   onChangeResolution: (resolution: number | null) => void;
-  onChangeStacking: (stacked: boolean) => void;
   onChangeShowExemplars: (show: boolean) => void;
+  onChangeDisplayMode: (mode: GraphDisplayMode) => void;
 }
 
 class GraphControls extends Component<GraphControlsProps> {
@@ -58,7 +59,9 @@ class GraphControls extends Component<GraphControlsProps> {
   };
 
   changeRangeInput = (range: number): void => {
-    this.setCurrentRangeValue(formatDuration(range));
+    if (this.rangeRef.current !== null) {
+      this.rangeRef.current.value = formatDuration(range);
+    }
   };
 
   increaseRange = (): void => {
@@ -81,18 +84,18 @@ class GraphControls extends Component<GraphControlsProps> {
     }
   };
 
+  changeResolutionInput = (resolution: number | null): void => {
+    if (this.resolutionRef.current !== null) {
+      this.resolutionRef.current.value = resolution !== null ? resolution.toString() : '';
+    }
+  };
+
   componentDidUpdate(prevProps: GraphControlsProps): void {
     if (prevProps.range !== this.props.range) {
       this.changeRangeInput(this.props.range);
     }
     if (prevProps.resolution !== this.props.resolution) {
-      this.setCurrentRangeValue(this.props.resolution !== null ? this.props.resolution.toString() : '');
-    }
-  }
-
-  setCurrentRangeValue(value: string): void {
-    if (this.rangeRef.current) {
-      this.rangeRef.current.value = value;
+      this.changeResolutionInput(this.props.resolution);
     }
   }
 
@@ -151,14 +154,29 @@ class GraphControls extends Component<GraphControlsProps> {
         <ButtonGroup className="stacked-input" size="sm">
           <Button
             title="Show unstacked line graph"
-            onClick={() => this.props.onChangeStacking(false)}
-            active={!this.props.stacked}
+            onClick={() => this.props.onChangeDisplayMode(GraphDisplayMode.Lines)}
+            active={this.props.displayMode === GraphDisplayMode.Lines}
           >
             <FontAwesomeIcon icon={faChartLine} fixedWidth />
           </Button>
-          <Button title="Show stacked graph" onClick={() => this.props.onChangeStacking(true)} active={this.props.stacked}>
+          <Button
+            title="Show stacked graph"
+            onClick={() => this.props.onChangeDisplayMode(GraphDisplayMode.Stacked)}
+            active={this.props.displayMode === GraphDisplayMode.Stacked}
+          >
             <FontAwesomeIcon icon={faChartArea} fixedWidth />
           </Button>
+          {/* TODO: Consider replacing this button with a select dropdown in the future,
+               to allow users to choose from multiple histogram series if available. */}
+          {this.props.isHeatmapData && (
+            <Button
+              title="Show heatmap graph"
+              onClick={() => this.props.onChangeDisplayMode(GraphDisplayMode.Heatmap)}
+              active={this.props.displayMode === GraphDisplayMode.Heatmap}
+            >
+              <FontAwesomeIcon icon={faBarChart} fixedWidth />
+            </Button>
+          )}
         </ButtonGroup>
 
         <ButtonGroup className="show-exemplars" size="sm">

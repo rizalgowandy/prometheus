@@ -18,10 +18,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"reflect"
 	"time"
 
-	"github.com/go-kit/log"
+	"github.com/google/go-cmp/cmp"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/common/promslog"
 
 	"github.com/prometheus/prometheus/config"
 	"github.com/prometheus/prometheus/discovery"
@@ -37,19 +38,25 @@ type sdCheckResult struct {
 }
 
 // CheckSD performs service discovery for the given job name and reports the results.
-func CheckSD(sdConfigFiles, sdJobName string, sdTimeout time.Duration) int {
-	logger := log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr))
+func CheckSD(sdConfigFiles, sdJobName string, sdTimeout time.Duration, registerer prometheus.Registerer) int {
+	logger := promslog.New(&promslog.Config{})
 
-	cfg, err := config.LoadFile(sdConfigFiles, false, false, logger)
+	cfg, err := config.LoadFile(sdConfigFiles, false, logger)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Cannot load config", err)
-		return 2
+		return failureExitCode
 	}
 
 	var scrapeConfig *config.ScrapeConfig
+	scfgs, err := cfg.GetScrapeConfigs()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Cannot load scrape configs", err)
+		return failureExitCode
+	}
+
 	jobs := []string{}
 	jobMatched := false
-	for _, v := range cfg.ScrapeConfigs {
+	for _, v := range scfgs {
 		jobs = append(jobs, v.JobName)
 		if v.JobName == sdJobName {
 			jobMatched = true
@@ -63,7 +70,7 @@ func CheckSD(sdConfigFiles, sdJobName string, sdTimeout time.Duration) int {
 		for _, job := range jobs {
 			fmt.Fprintf(os.Stderr, "\t%s\n", job)
 		}
-		return 1
+		return failureExitCode
 	}
 
 	targetGroupChan := make(chan []*targetgroup.Group)
@@ -71,12 +78,25 @@ func CheckSD(sdConfigFiles, sdJobName string, sdTimeout time.Duration) int {
 	defer cancel()
 
 	for _, cfg := range scrapeConfig.ServiceDiscoveryConfigs {
-		d, err := cfg.NewDiscoverer(discovery.DiscovererOptions{Logger: logger})
+		reg := prometheus.NewRegistry()
+		refreshMetrics := discovery.NewRefreshMetrics(reg)
+		metrics := cfg.NewDiscovererMetrics(reg, refreshMetrics)
+		err := metrics.Register()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Could not register service discovery metrics", err)
+			return failureExitCode
+		}
+
+		d, err := cfg.NewDiscoverer(discovery.DiscovererOptions{Logger: logger, Metrics: metrics})
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Could not create new discoverer", err)
-			return 2
+			return failureExitCode
 		}
-		go d.Run(ctx, targetGroupChan)
+		go func() {
+			d.Run(ctx, targetGroupChan)
+			metrics.Unregister()
+			refreshMetrics.Unregister()
+		}()
 	}
 
 	var targetGroups []*targetgroup.Group
@@ -100,31 +120,33 @@ outerLoop:
 	res, err := json.MarshalIndent(results, "", "  ")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Could not marshal result json: %s", err)
-		return 2
+		return failureExitCode
 	}
 
 	fmt.Printf("%s", res)
-	return 0
+	return successExitCode
 }
 
 func getSDCheckResult(targetGroups []*targetgroup.Group, scrapeConfig *config.ScrapeConfig) []sdCheckResult {
 	sdCheckResults := []sdCheckResult{}
+	lb := labels.NewBuilder(labels.EmptyLabels())
 	for _, targetGroup := range targetGroups {
 		for _, target := range targetGroup.Targets {
-			labelSlice := make([]labels.Label, 0, len(target)+len(targetGroup.Labels))
+			lb.Reset(labels.EmptyLabels())
 
 			for name, value := range target {
-				labelSlice = append(labelSlice, labels.Label{Name: string(name), Value: string(value)})
+				lb.Set(string(name), string(value))
 			}
 
 			for name, value := range targetGroup.Labels {
 				if _, ok := target[name]; !ok {
-					labelSlice = append(labelSlice, labels.Label{Name: string(name), Value: string(value)})
+					lb.Set(string(name), string(value))
 				}
 			}
 
-			targetLabels := labels.New(labelSlice...)
-			res, orig, err := scrape.PopulateLabels(targetLabels, scrapeConfig)
+			scrape.PopulateDiscoveredLabels(lb, scrapeConfig, target, targetGroup.Labels)
+			orig := lb.Labels()
+			res, err := scrape.PopulateLabels(lb, scrapeConfig, target, targetGroup.Labels)
 			result := sdCheckResult{
 				DiscoveredLabels: orig,
 				Labels:           res,
@@ -133,7 +155,7 @@ func getSDCheckResult(targetGroups []*targetgroup.Group, scrapeConfig *config.Sc
 
 			duplicateRes := false
 			for _, sdCheckRes := range sdCheckResults {
-				if reflect.DeepEqual(sdCheckRes, result) {
+				if cmp.Equal(sdCheckRes, result, cmp.Comparer(labels.Equal)) {
 					duplicateRes = true
 					break
 				}
